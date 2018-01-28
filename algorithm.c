@@ -6,10 +6,10 @@
 //#include <pcontrol.h>
 
 #define MASTER 0
-#define TRACEFILES 0
-#define TRACELEVEL 0
-#define TRACENODE 0
-#define TRACEEVENT 0
+//#define TRACEFILES 0
+//#define TRACELEVEL 0
+//#define TRACENODE 0
+//#define TRACEEVENT 0
 
 int voidprintf(char *fmt, ...) {
 }
