@@ -1,0 +1,32 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/Users/azavalin/Development/mpi/algorithm.c
+math.h
+-
+stdlib.h
+-
+stdio.h
+-
+mpi.h
+-
+
+/Users/azavalin/opt/usr/local/include/mpi.h
+stddef.h
+-
+mpi_portable_platform.h
+/Users/azavalin/opt/usr/local/include/mpi_portable_platform.h
+openmpi/ompi/mpi/cxx/mpicxx.h
+/Users/azavalin/opt/usr/local/include/openmpi/ompi/mpi/cxx/mpicxx.h
+
+/Users/azavalin/opt/usr/local/include/mpi_portable_platform.h
+omp.h
+/Users/azavalin/opt/usr/local/include/omp.h
+omp.h
+/Users/azavalin/opt/usr/local/include/omp.h
+

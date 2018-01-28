@@ -1,0 +1,1 @@
+/Users/azavalin/opt/usr/local/bin/mpicc -g -Wl,-search_paths_first -Wl,-headerpad_max_install_names  CMakeFiles/mpi.dir/algorithm.c.o  -o mpi 
