@@ -1,9 +1,9 @@
 #include <math.h>
-//#include <malloc.h>
+#include <malloc.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <mpi.h>
-//#include <pcontrol.h>
+#include <pcontrol.h>
 
 #define MASTER 0
 //#define TRACEFILES 0
@@ -16,62 +16,27 @@ int voidprintf(char *fmt, ...) {
 
 #define log voidprintf
 
-/*
- * Схема хранения симплекс-таблицы
- * ================================
- *  Для задачи
- * 
- *  maximize
- *  +2531920636.634x0 +4003819341.584x1 +1086267303.960x2
 
- *  subject to
- *  +40.058x0 + 6.151x1 +33.627x2 <= +2773.267
- *  + 6.151x0 +33.627x1 +29.675x2 <= +2049.243
- *  +33.627x0 +29.675x1 + 4.044x2 <= +2027.762
- *  +29.675x0 + 4.044x1 +32.659x2 <= +1963.574
- * в которой n=3 переменных и m=4 ограничений,
- * 
- * симплекс-таблица (одна большая матрица) есть следующий список из m+1 строк (каждая длины m+n+1):
- * [
- *  [0.0,                 -2531920636.6336632,  -4003819341.5841589,  -1086267303.9603961,  0.0,  0.0,  0.0,  0.0]
- *  [2773.2670739999999,  40.057912000000002,   6.1513150000000003,   33.627251000000001,   1.0,  0.0,  0.0,  0.0]
- *  [2049.242808,         6.1513150000000003,   33.627251000000001,   29.675108999999999,   0.0,  1.0,  0.0,  0.0]
- *  [2027.7617310000001,  33.627251000000001,   29.675108999999999,   4.0444529999999999,   0.0,  0.0,  1.0,  0.0]
- *  [1963.5742769999999,  29.675108999999999,   4.0444529999999999,   32.658912999999998,   0.0,  0.0,  0.0,  1.0]
- *  ]
- * 
- * Здесь мы храним таблицу по столбцам (т.е. tab[column_index][row_index]),
- * и при распараллеливании каждый узел получает свое подмножество столбцов для обработки. (+ нулевой столбец)
- */
-
-/* симплекс-таблица */
 struct SimplexTableau {
     int n;
     int n_cols;
     int m;
     int n_rows;
-    /* номера переменных, отданных текущем узлу
-     * (номер столбца = номер переменной + 1)
-     */
+
     int x_lo;
     int x_hi;
-    /* хранится по столбцам, причем каждый узел хранит
-     * только столбец 0 + выбранный на текущей итерации
-     * столбец + свой диапазон */
-    double **tab;
-    /* tab[column_index][row_index] */
 
-    /* контекст MPI */
+    double **tab;
+
     int my_rank;
     int size;
 };
 
-/* предложение выбрать вот эту строку и столбец */
 struct SimplexRowColumnVote {
     int my_rank;
-    int p_xi;  /* i = p_xi + 1 */
-    int p_row; /* j = row */
-    double tab_xi_0; /* значение tab[p_xi + 1][0] */
+    int p_xi;
+    int p_row;
+    double tab_xi_0;
 };
 
 
@@ -79,14 +44,12 @@ struct SimplexRowColumnVote {
 #define MIN(X,Y) ((X) < (Y) ? (X) : (Y))
 
 
-/* выбор диапазона, достающегося одному узлу для обработки  */
 void select_chunk(int total_items, int i, int size, int *lo, int *hi) {
     int items_per_child = (int)(ceil((float)(total_items) / (float)(size)));
     *lo = items_per_child * i;
     *hi = MIN(total_items - 1, items_per_child * (i + 1) - 1);
 }
 
-/* инициализация, выделение памяти под симплекс-таблицу */
 void spx_init_tableau(struct SimplexTableau *spx, int n, int m, int x_lo, int x_hi) {
     int i, j;
     spx->n = n;
@@ -112,7 +75,6 @@ void spx_free_column(struct SimplexTableau *spx, int xi) {
     spx->tab[xi+1] = NULL;
 }
 
-/* считывание задачи линейного программирования из файла */
 void spx_fill_from_file(struct SimplexTableau *spx, FILE *f, int my_rank, int size) {
     int m, n, i, j;
     int x_hi, x_lo;
@@ -125,10 +87,9 @@ void spx_fill_from_file(struct SimplexTableau *spx, FILE *f, int my_rank, int si
     fscanf(f, "%d", &m);
 
     select_chunk(m + n, my_rank, size, &x_lo, &x_hi);
-    printf("rank %d: my chunk is %d..%d\n", my_rank, x_lo, x_hi);
+//    printf("rank %d: my chunk is %d..%d\n", my_rank, x_lo, x_hi);
     spx_init_tableau(spx, n, m, x_lo, x_hi);
 
-    /* vector c */
     for (i = 0; i < n; i++) {
         fscanf(f, "%lf", &f_d);
         if (x_lo <= i && i <= x_hi) {
@@ -136,17 +97,17 @@ void spx_fill_from_file(struct SimplexTableau *spx, FILE *f, int my_rank, int si
         }
     }
     for (j = 1; j <= m; j++) {
-        /* row of matrix A */
+
         for (i = 0; i < n; i++) {
             fscanf(f, "%lf", &f_d);
             if (x_lo <= i && i <= x_hi) {
                 spx->tab[i+1][j] = f_d;
             }
         }
-        /* element of vector b */
+
         fscanf(f, "%lf", &f_d);
         spx->tab[0][j] = f_d;
-        /* slack variables */
+
         i = n + j - 1;
         if (x_lo <= i && i <= x_hi) {
             spx->tab[i+1][j] = 1.0;
@@ -154,7 +115,6 @@ void spx_fill_from_file(struct SimplexTableau *spx, FILE *f, int my_rank, int si
     }
 }
 
-/* вывод симплекс-таблицы в stdout */
 void spx_print(struct SimplexTableau *spx) {
     int i, j;
     double v;
@@ -178,13 +138,13 @@ void spx_print(struct SimplexTableau *spx) {
     printf("]\n");
 }
 
-/* вывод решения (список иксов) */
+
 void spx_print_xs(struct SimplexTableau *spx) {
     int xi;
     double x;
     int i, j;
 
-    printf("[");
+    printf("Calculated values:");
     for (xi = 0; xi < spx->n; xi++) {
         i = xi + 1;
         x = 0.0;
@@ -200,10 +160,10 @@ void spx_print_xs(struct SimplexTableau *spx) {
         }
         printf(" %lf", x);
     }
-    printf("]\n");
+    printf("\n");
 }
 
-/* выбор строки и столбца для новой итерации */
+
 struct SimplexRowColumnVote spx_select_col_and_row(struct SimplexTableau *spx) {
     struct SimplexRowColumnVote vote;
     int max_xi, i, j;
@@ -236,14 +196,11 @@ struct SimplexRowColumnVote spx_select_col_and_row(struct SimplexTableau *spx) {
 }
 
 
-/* выбор наилучшего столбца по массиву голосов.
- * Если текущее решение оптимально, то поле my_rank результата равно -1.
-*/
 struct SimplexRowColumnVote spx_select_best_vote(struct SimplexRowColumnVote *votes, int n_votes) {
     struct SimplexRowColumnVote best;
     int i;
     best.my_rank = -1;
-    best.tab_xi_0 = 1.0; /* выбираются столбцы с наименьшим отрицательным */
+    best.tab_xi_0 = 1.0;
     for (i = 0; i < n_votes; i++) {
         if (votes[i].p_xi != -1 && votes[i].p_row != -1) {
             if (votes[i].tab_xi_0 < best.tab_xi_0) {
@@ -254,7 +211,6 @@ struct SimplexRowColumnVote spx_select_best_vote(struct SimplexRowColumnVote *vo
     return best;
 }
 
-/* внесение переменной p_xi в базис и исключение переменной p_row-1 из базиса */
 void spx_pivot(struct SimplexTableau *spx, int p_xi, int p_row) {
     double pivot_value;
     double ratio;
@@ -281,7 +237,6 @@ void spx_pivot(struct SimplexTableau *spx, int p_xi, int p_row) {
     }
 }
 
-/* получение голоса от узла */
 struct SimplexRowColumnVote par_receive_vote_unicast(int from_node) {
     struct SimplexRowColumnVote vote;
     MPI_Status status;
@@ -293,19 +248,19 @@ struct SimplexRowColumnVote par_receive_vote_unicast(int from_node) {
     return vote;
 }
 
-/* отправка голоса узлу */
+
 void par_send_vote_unicast(struct SimplexRowColumnVote vote, int to_node) {
     int votesize = sizeof(struct SimplexRowColumnVote);
     int r = MPI_Send(&vote, votesize, MPI_CHAR, to_node, 0, MPI_COMM_WORLD);
     log("[] send returned %d\n", r);
 }
 
-/* отправка или получение широковещательной рассылки с выбранным голосом */
+
 void par_vote_rendezvous_broadcast(struct SimplexRowColumnVote *vote, int sender) {
     MPI_Bcast(vote, sizeof(struct SimplexRowColumnVote), MPI_CHAR, sender, MPI_COMM_WORLD);
 }
 
-/* отправка или получение широковещательной рассылки с одним столбцом */
+
 void par_column_rendezvous_broadcast(struct SimplexTableau *spx, int col_i, int sender) {
     int row_size_in_bytes = spx->n_rows * sizeof(double);
     if (sender == spx->my_rank) {
@@ -318,7 +273,7 @@ void par_column_rendezvous_broadcast(struct SimplexTableau *spx, int col_i, int 
     MPI_Bcast(spx->tab[col_i], row_size_in_bytes, MPI_CHAR, sender, MPI_COMM_WORLD);
 }
 
-/* получение недостающих столбцов со всех узлов */
+
 void par_collect_all_columns(struct SimplexTableau *spx, int size) {
     MPI_Status status;
     int node_i;
@@ -336,12 +291,12 @@ void par_collect_all_columns(struct SimplexTableau *spx, int size) {
     }
     for (col_i = 0; col_i < spx->n_cols; col_i++) {
         if (!spx->tab[col_i]) {
-            printf("{0} achtung! column %d is missing!\n", col_i);
+//            printf("{0} achtung! column %d is missing!\n", col_i);
         }
     }
 }
 
-/* рассылка своих столбцов */
+
 void par_send_my_columns(struct SimplexTableau *spx, int receiver) {
     int col_i;
     int row_size_in_bytes = spx->n_rows * sizeof(double);
@@ -350,7 +305,7 @@ void par_send_my_columns(struct SimplexTableau *spx, int receiver) {
     }
 }
 
-/* что делает главный узел */
+
 void par_master(struct SimplexTableau *spx, int rank, int size) {
     struct SimplexRowColumnVote *votes;
     struct SimplexRowColumnVote best_vote;
@@ -376,18 +331,17 @@ void par_master(struct SimplexTableau *spx, int rank, int size) {
         best_vote = spx_select_best_vote(votes, size);
         log("{0} reached decision (%d %d)\n", best_vote.p_xi, best_vote.p_row);
 
-        /* это мы рассылаем */
         MPI_Pcontrol(TRACEEVENT, "entry", 1, 0, "");
         par_vote_rendezvous_broadcast(&best_vote, MASTER);
         log("{0} transmitted decision\n");
 
         if (best_vote.my_rank == -1) {
-            printf("step %d: optimal\n", step_i);
+//            printf("step %d: optimal\n", step_i);
             break;
         }
 
-        printf("step %d: x %d, row %d  (node %d)\n", step_i, best_vote.p_xi, best_vote.p_row, best_vote.my_rank);
-        /* а это мы получаем или рассылаем, в зависимости от выбранного голоса */
+        printf("Iteration #%d: x %d, row %d is running on node %d\n", step_i, best_vote.p_xi, best_vote.p_row, best_vote.my_rank);
+
         par_column_rendezvous_broadcast(spx, best_vote.p_xi + 1, best_vote.my_rank);
         log("{0} synced column %d\n", best_vote.p_xi + 1);
         MPI_Pcontrol(TRACEEVENT, "exit", 1, 0, "");
@@ -396,24 +350,26 @@ void par_master(struct SimplexTableau *spx, int rank, int size) {
         log("{0} completed pivot\n");
     }
     t1 = MPI_Wtime();
-    /* соберем итоговую таблицу по частям */
+
     MPI_Pcontrol(TRACEEVENT, "entry", 2, 0, "");
     par_collect_all_columns(spx, size);
     MPI_Pcontrol(TRACEEVENT, "exit", 2, 0, "");
     t2 = MPI_Wtime();
 
-    /*spx_print(spx); */
-    spx_print_xs(spx);
-    printf("F = %lf\n", spx->tab[0][0]);
 
-    printf("calc time:    %20.5lf\n", t1-t0);
-    printf("compose time: %20.5lf\n", t2-t1);
-    printf("total time:   %20.5lf\n", t2-t0);
+    spx_print_xs(spx);
+//    printf("F = %lf\n", spx->tab[0][0]);
+
+//    printf("Calculation time:    %20.5lf\n", t1-t0);
+//    printf("compose time: %20.5lf\n", t2-t1);
+//    printf("Total time:   %20.5lf\n", t2-t0);
+
+    printf("result: %lf\n", spx->tab[0][0]);
 
     free(votes);
 }
 
-/* что делает подчиненный узел */
+
 void par_slave(struct SimplexTableau *spx, int rank, int size) {
     struct SimplexRowColumnVote vote;
     int step_i;
@@ -433,7 +389,7 @@ void par_slave(struct SimplexTableau *spx, int rank, int size) {
         if (vote.my_rank == -1) {
             break;
         }
-        /* а это мы получаем или рассылаем, в зависимости от выбранного голоса */
+
         par_column_rendezvous_broadcast(spx, vote.p_xi + 1, vote.my_rank);
         log("[%d] synced column %d\n", rank, vote.p_xi + 1);
         MPI_Pcontrol(TRACEEVENT, "exit", 1, 0, "");
@@ -441,7 +397,7 @@ void par_slave(struct SimplexTableau *spx, int rank, int size) {
         spx_pivot(spx, vote.p_xi, vote.p_row);
         log("[%d] completed pivot\n", rank);
     }
-    /* соберем итоговую таблицу по частям */
+
     log("[%d] sending columns\n", rank);
     MPI_Pcontrol(TRACEEVENT, "entry", 2, 0, "");
     par_send_my_columns(spx, MASTER);
@@ -463,7 +419,8 @@ void main_simplex(int rank, int size, char *filename) {
     spx_fill_from_file(&spx, f, rank, size);
     fclose(f);
 
-    printf("My rank is %d of %d\n", rank, size);
+//    printf("My rank is %d of %d\n", rank, size);
+    printf("Thread #%d/%d\n", rank, size);
 //    spx_print(&spx);
     if (rank == MASTER) {
         par_master(&spx, rank, size);
@@ -474,7 +431,7 @@ void main_simplex(int rank, int size, char *filename) {
     t_1 = MPI_Wtime();
 
     if (rank == MASTER) {
-        printf("run time:   %20.5lf\n", t_1 - t_0);
+        printf("Total time: %lf\n", t_1 - t_0);
     }
 }
 
@@ -490,7 +447,7 @@ int main(int argc, char **argv) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
     if (argc == 1 || !argv[1]) {
-        printf("Usage: %s <simplex_task.txt>\n", argv[0]);
+        printf("Task not found\n", argv[0]);
     } else {
         main_simplex(rank, size, argv[1]);
     }
